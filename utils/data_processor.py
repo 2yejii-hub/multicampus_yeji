@@ -312,6 +312,207 @@ def validate_data(df: pd.DataFrame) -> bool:
     return True
 
 
+# ============================================================
+# Phase 2: 집계 및 필터 함수
+# ============================================================
+
+def filter_data(
+    df: pd.DataFrame,
+    day_type: str = "전체",
+    lines: List[str] = None,
+    time_range: tuple = None
+) -> pd.DataFrame:
+    """
+    필터 조건에 따라 데이터를 필터링합니다.
+    
+    Args:
+        df: 원본 데이터프레임
+        day_type: 요일 구분 ("평일", "토요일", "일요일", "휴일", "전체")
+        lines: 선택된 호선 리스트
+        time_range: 시간 범위 (시작시, 종료시) 튜플
+        
+    Returns:
+        pd.DataFrame: 필터링된 데이터프레임
+    """
+    df_filtered = df.copy()
+    
+    # 요일 필터
+    if day_type and day_type != "전체":
+        if day_type == "휴일":
+            df_filtered = df_filtered[df_filtered['요일구분'].isin(['토요일', '일요일'])]
+        else:
+            df_filtered = df_filtered[df_filtered['요일구분'] == day_type]
+    
+    # 호선 필터
+    if lines and len(lines) > 0:
+        df_filtered = df_filtered[df_filtered['호선'].isin(lines)]
+    
+    # 시간 범위 필터
+    if time_range:
+        start_hour, end_hour = time_range
+        df_filtered = df_filtered[
+            (df_filtered['시간_정렬용'] >= start_hour * 60) & 
+            (df_filtered['시간_정렬용'] <= end_hour * 60)
+        ]
+    
+    return df_filtered
+
+
+def get_congestion_by_line(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    호선별 평균 혼잡도를 계산합니다.
+    
+    Args:
+        df: 데이터프레임
+        
+    Returns:
+        pd.DataFrame: 호선별 평균 혼잡도
+    """
+    result = df.groupby('호선').agg({
+        '혼잡도': 'mean',
+        '역명': 'nunique'
+    }).reset_index()
+    
+    result.columns = ['호선', '평균_혼잡도', '역_수']
+    
+    # 호선 번호로 정렬
+    result['호선_번호'] = result['호선'].str.extract(r'(\d+)').astype(int)
+    result = result.sort_values('호선_번호').drop(columns=['호선_번호'])
+    
+    return result.reset_index(drop=True)
+
+
+def get_congestion_by_time(df: pd.DataFrame, group_by: str = None) -> pd.DataFrame:
+    """
+    시간대별 평균 혼잡도를 계산합니다.
+    
+    Args:
+        df: 데이터프레임
+        group_by: 추가 그룹 컬럼 (예: '요일구분', '호선')
+        
+    Returns:
+        pd.DataFrame: 시간대별 평균 혼잡도
+    """
+    if group_by:
+        result = df.groupby(['시간대', '시간_정렬용', group_by])['혼잡도'].mean().reset_index()
+    else:
+        result = df.groupby(['시간대', '시간_정렬용'])['혼잡도'].mean().reset_index()
+    
+    result = result.sort_values('시간_정렬용')
+    
+    return result
+
+
+def get_top_stations(
+    df: pd.DataFrame,
+    n: int = 10,
+    ascending: bool = False
+) -> pd.DataFrame:
+    """
+    혼잡도 기준 TOP N 역을 반환합니다.
+    
+    Args:
+        df: 데이터프레임
+        n: 반환할 역 개수
+        ascending: True면 여유로운 역, False면 혼잡한 역
+        
+    Returns:
+        pd.DataFrame: TOP N 역 데이터프레임
+    """
+    # 역별 평균 혼잡도 계산
+    result = df.groupby(['호선', '역명']).agg({
+        '혼잡도': ['mean', 'max']
+    }).reset_index()
+    
+    result.columns = ['호선', '역명', '평균_혼잡도', '최대_혼잡도']
+    
+    # 정렬 및 TOP N 추출
+    result = result.sort_values('평균_혼잡도', ascending=ascending).head(n)
+    
+    # 순위 추가
+    result = result.reset_index(drop=True)
+    result.insert(0, '순위', range(1, len(result) + 1))
+    
+    return result
+
+
+def get_congestion_by_day_time(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    요일구분 + 시간대별 평균 혼잡도를 계산합니다.
+    (평일 vs 휴일 비교 차트용)
+    
+    Args:
+        df: 데이터프레임
+        
+    Returns:
+        pd.DataFrame: 요일구분/시간대별 평균 혼잡도
+    """
+    result = df.groupby(['요일구분', '시간대', '시간_정렬용'])['혼잡도'].mean().reset_index()
+    result = result.sort_values('시간_정렬용')
+    
+    return result
+
+
+def get_peak_info(df: pd.DataFrame) -> Dict:
+    """
+    피크 시간대 정보를 계산합니다.
+    
+    Args:
+        df: 데이터프레임
+        
+    Returns:
+        dict: 피크 정보 (시간대, 혼잡도 등)
+    """
+    # 시간대별 평균 혼잡도
+    time_avg = df.groupby('시간대')['혼잡도'].mean()
+    
+    # 피크 시간대
+    peak_time = time_avg.idxmax()
+    peak_congestion = time_avg.max()
+    
+    # 가장 여유로운 시간대
+    quiet_time = time_avg.idxmin()
+    quiet_congestion = time_avg.min()
+    
+    return {
+        '피크_시간': peak_time,
+        '피크_혼잡도': peak_congestion,
+        '여유_시간': quiet_time,
+        '여유_혼잡도': quiet_congestion,
+    }
+
+
+def get_line_list(df: pd.DataFrame) -> List[str]:
+    """
+    호선 목록을 정렬하여 반환합니다.
+    
+    Args:
+        df: 데이터프레임
+        
+    Returns:
+        List[str]: 정렬된 호선 목록
+    """
+    lines = df['호선'].unique().tolist()
+    # 숫자 기준 정렬
+    lines.sort(key=lambda x: int(x.replace('호선', '').strip()) if x.replace('호선', '').strip().isdigit() else 999)
+    return lines
+
+
+def get_time_slots(df: pd.DataFrame) -> List[str]:
+    """
+    시간대 목록을 정렬하여 반환합니다.
+    
+    Args:
+        df: 데이터프레임
+        
+    Returns:
+        List[str]: 정렬된 시간대 목록
+    """
+    time_df = df[['시간대', '시간_정렬용']].drop_duplicates()
+    time_df = time_df.sort_values('시간_정렬용')
+    return time_df['시간대'].tolist()
+
+
 if __name__ == "__main__":
     # 테스트용 코드
     from data_loader import load_raw_data, save_processed_data
