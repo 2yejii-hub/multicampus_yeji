@@ -513,6 +513,255 @@ def get_time_slots(df: pd.DataFrame) -> List[str]:
     return time_df['시간대'].tolist()
 
 
+# ============================================================
+# Phase 3: 역별 분석 함수
+# ============================================================
+
+def get_station_list(df: pd.DataFrame, line: str = None) -> List[str]:
+    """
+    특정 호선의 역 목록을 반환합니다.
+    
+    Args:
+        df: 데이터프레임
+        line: 호선명 (None이면 전체 역 목록)
+        
+    Returns:
+        List[str]: 정렬된 역 목록
+    """
+    if line:
+        stations = df[df['호선'] == line]['역명'].unique().tolist()
+    else:
+        stations = df['역명'].unique().tolist()
+    
+    stations.sort()
+    return stations
+
+
+def get_station_data(df: pd.DataFrame, station: str, line: str) -> pd.DataFrame:
+    """
+    특정 역의 전체 데이터를 반환합니다.
+    
+    Args:
+        df: 데이터프레임
+        station: 역명
+        line: 호선명
+        
+    Returns:
+        pd.DataFrame: 해당 역의 데이터
+    """
+    return df[(df['역명'] == station) & (df['호선'] == line)].copy()
+
+
+def get_station_stats(df: pd.DataFrame, station: str, line: str) -> Dict:
+    """
+    역별 통계 정보를 계산합니다.
+    
+    Args:
+        df: 데이터프레임
+        station: 역명
+        line: 호선명
+        
+    Returns:
+        Dict: 역별 통계 정보
+    """
+    station_df = get_station_data(df, station, line)
+    
+    if station_df.empty:
+        return {
+            '평균_혼잡도': 0,
+            '최대_혼잡도': 0,
+            '최소_혼잡도': 0,
+            '피크_시간': '-',
+            '피크_혼잡도': 0,
+            '여유_시간': '-',
+            '여유_혼잡도': 0,
+        }
+    
+    # 시간대별 평균 혼잡도
+    time_avg = station_df.groupby('시간대')['혼잡도'].mean()
+    
+    # 피크/여유 시간대
+    peak_time = time_avg.idxmax()
+    peak_congestion = time_avg.max()
+    quiet_time = time_avg.idxmin()
+    quiet_congestion = time_avg.min()
+    
+    return {
+        '평균_혼잡도': station_df['혼잡도'].mean(),
+        '최대_혼잡도': station_df['혼잡도'].max(),
+        '최소_혼잡도': station_df['혼잡도'].min(),
+        '피크_시간': peak_time,
+        '피크_혼잡도': peak_congestion,
+        '여유_시간': quiet_time,
+        '여유_혼잡도': quiet_congestion,
+    }
+
+
+def get_station_direction_comparison(df: pd.DataFrame, station: str, line: str) -> pd.DataFrame:
+    """
+    상행/하행 방향별 시간대 혼잡도 비교 데이터를 반환합니다.
+    
+    Args:
+        df: 데이터프레임
+        station: 역명
+        line: 호선명
+        
+    Returns:
+        pd.DataFrame: 방향별 시간대 혼잡도 데이터
+    """
+    station_df = get_station_data(df, station, line)
+    
+    if station_df.empty:
+        return pd.DataFrame()
+    
+    # 방향별 시간대 평균 혼잡도
+    result = station_df.groupby(['방향', '시간대', '시간_정렬용'])['혼잡도'].mean().reset_index()
+    result = result.sort_values('시간_정렬용')
+    
+    return result
+
+
+def get_station_day_comparison(df: pd.DataFrame, station: str, line: str) -> pd.DataFrame:
+    """
+    평일/토요일/일요일 요일별 혼잡도 비교 데이터를 반환합니다.
+    
+    Args:
+        df: 데이터프레임
+        station: 역명
+        line: 호선명
+        
+    Returns:
+        pd.DataFrame: 요일별 시간대 혼잡도 데이터
+    """
+    station_df = get_station_data(df, station, line)
+    
+    if station_df.empty:
+        return pd.DataFrame()
+    
+    # 요일별 시간대 평균 혼잡도
+    result = station_df.groupby(['요일구분', '시간대', '시간_정렬용'])['혼잡도'].mean().reset_index()
+    result = result.sort_values('시간_정렬용')
+    
+    return result
+
+
+def get_station_heatmap_data(df: pd.DataFrame, station: str, line: str, 
+                              pivot_by: str = '방향') -> pd.DataFrame:
+    """
+    히트맵용 피벗 데이터를 생성합니다.
+    
+    Args:
+        df: 데이터프레임
+        station: 역명
+        line: 호선명
+        pivot_by: 피벗 기준 ('방향' 또는 '요일구분')
+        
+    Returns:
+        pd.DataFrame: 피벗된 히트맵 데이터
+    """
+    station_df = get_station_data(df, station, line)
+    
+    if station_df.empty:
+        return pd.DataFrame()
+    
+    # 그룹별 평균 혼잡도
+    grouped = station_df.groupby([pivot_by, '시간대', '시간_정렬용'])['혼잡도'].mean().reset_index()
+    
+    # 피벗 테이블 생성
+    pivot = grouped.pivot_table(
+        values='혼잡도',
+        index=pivot_by,
+        columns='시간대',
+        aggfunc='mean'
+    )
+    
+    # 시간대 순으로 컬럼 정렬
+    time_order = grouped.sort_values('시간_정렬용')['시간대'].unique()
+    pivot = pivot.reindex(columns=time_order)
+    
+    return pivot
+
+
+def generate_station_insights(df: pd.DataFrame, station: str, line: str) -> List[str]:
+    """
+    역별 자동 인사이트를 생성합니다.
+    
+    Args:
+        df: 데이터프레임
+        station: 역명
+        line: 호선명
+        
+    Returns:
+        List[str]: 인사이트 문자열 리스트
+    """
+    insights = []
+    station_df = get_station_data(df, station, line)
+    
+    if station_df.empty:
+        return ["데이터가 없습니다."]
+    
+    stats = get_station_stats(df, station, line)
+    
+    # 1. 피크 시간대 인사이트
+    insights.append(
+        f"🕐 이 역은 **{stats['피크_시간']}**에 가장 혼잡합니다 (혼잡도 {stats['피크_혼잡도']:.1f}%)"
+    )
+    
+    # 2. 가장 여유로운 시간대
+    insights.append(
+        f"😊 가장 여유로운 시간대는 **{stats['여유_시간']}**입니다 (혼잡도 {stats['여유_혼잡도']:.1f}%)"
+    )
+    
+    # 3. 평일 vs 휴일 비교
+    weekday_avg = station_df[station_df['요일구분'] == '평일']['혼잡도'].mean()
+    weekend_avg = station_df[station_df['요일구분'].isin(['토요일', '일요일'])]['혼잡도'].mean()
+    
+    if weekday_avg > 0 and weekend_avg > 0:
+        diff = weekday_avg - weekend_avg
+        if diff > 5:
+            insights.append(
+                f"📅 평일이 주말보다 평균 **{diff:.1f}%** 더 혼잡합니다"
+            )
+        elif diff < -5:
+            insights.append(
+                f"📅 주말이 평일보다 평균 **{abs(diff):.1f}%** 더 혼잡합니다"
+            )
+        else:
+            insights.append(
+                f"📅 평일과 주말의 혼잡도 차이가 크지 않습니다"
+            )
+    
+    # 4. 방향별 비교
+    direction_avg = station_df.groupby('방향')['혼잡도'].mean()
+    if len(direction_avg) >= 2:
+        directions = direction_avg.sort_values()
+        less_congested = directions.index[0]
+        more_congested = directions.index[-1]
+        diff = directions.iloc[-1] - directions.iloc[0]
+        
+        if diff > 5:
+            insights.append(
+                f"🚇 **{less_congested}** 방향이 **{more_congested}** 방향보다 평균 **{diff:.1f}%** 덜 혼잡합니다"
+            )
+    
+    # 5. 혼잡도 레벨 요약
+    avg_congestion = stats['평균_혼잡도']
+    if avg_congestion < 50:
+        insights.append(
+            f"✅ 이 역은 전반적으로 **여유로운** 편입니다 (평균 {avg_congestion:.1f}%)"
+        )
+    elif avg_congestion < 70:
+        insights.append(
+            f"⚠️ 이 역은 **보통** 수준의 혼잡도를 보입니다 (평균 {avg_congestion:.1f}%)"
+        )
+    else:
+        insights.append(
+            f"🔴 이 역은 전반적으로 **혼잡한** 편입니다 (평균 {avg_congestion:.1f}%)"
+        )
+    
+    return insights
+
+
 if __name__ == "__main__":
     # 테스트용 코드
     from data_loader import load_raw_data, save_processed_data

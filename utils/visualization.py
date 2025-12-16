@@ -326,6 +326,167 @@ def style_dataframe(df: pd.DataFrame, congestion_col: str = '혼잡도'):
     return df.style
 
 
+# ============================================================
+# Phase 3: 역별 분석 차트 함수
+# ============================================================
+
+# 방향별 색상
+DIRECTION_COLORS = {
+    '상행': '#3498db',
+    '하행': '#e74c3c',
+    '내선': '#9b59b6',
+    '외선': '#2ecc71',
+}
+
+
+def create_direction_comparison_chart(
+    df: pd.DataFrame,
+    x: str = '시간대',
+    y: str = '혼잡도',
+    direction_col: str = '방향',
+    title: str = "방향별 시간대 혼잡도 비교",
+    height: int = 400
+) -> go.Figure:
+    """
+    상행/하행 방향별 비교 선 차트 생성
+    
+    Args:
+        df: 데이터프레임 (방향, 시간대, 혼잡도 컬럼 필요)
+        x: x축 컬럼명
+        y: y축 컬럼명
+        direction_col: 방향 컬럼명
+        title: 차트 제목
+        height: 차트 높이
+        
+    Returns:
+        go.Figure: Plotly Figure 객체
+    """
+    fig = px.line(
+        df, x=x, y=y, color=direction_col,
+        title=title,
+        color_discrete_map=DIRECTION_COLORS,
+        markers=True
+    )
+    
+    fig.update_layout(
+        xaxis_title="시간대",
+        yaxis_title="혼잡도 (%)",
+        height=height,
+        template='plotly_white',
+        hovermode='x unified',
+        margin=dict(t=50, b=50, l=50, r=30),
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="right",
+            x=1,
+            title=None
+        )
+    )
+    
+    fig.update_xaxes(tickangle=-45)
+    
+    return fig
+
+
+def create_direction_bar_chart(
+    df: pd.DataFrame,
+    direction_col: str = '방향',
+    value_col: str = '혼잡도',
+    title: str = "방향별 평균 혼잡도",
+    height: int = 300
+) -> go.Figure:
+    """
+    방향별 평균 혼잡도 막대 차트 생성
+    
+    Args:
+        df: 데이터프레임
+        direction_col: 방향 컬럼명
+        value_col: 값 컬럼명
+        title: 차트 제목
+        height: 차트 높이
+        
+    Returns:
+        go.Figure: Plotly Figure 객체
+    """
+    # 방향별 평균 계산
+    direction_avg = df.groupby(direction_col)[value_col].mean().reset_index()
+    direction_avg.columns = ['방향', '평균_혼잡도']
+    
+    # 색상 설정
+    colors = [DIRECTION_COLORS.get(d, '#3498db') for d in direction_avg['방향']]
+    
+    fig = go.Figure(data=[
+        go.Bar(
+            x=direction_avg['방향'],
+            y=direction_avg['평균_혼잡도'],
+            marker_color=colors,
+            text=direction_avg['평균_혼잡도'].round(1),
+            texttemplate='%{text}%',
+            textposition='outside',
+            hovertemplate='<b>%{x}</b><br>평균 혼잡도: %{y:.1f}%<extra></extra>'
+        )
+    ])
+    
+    fig.update_layout(
+        title=dict(text=title, font=dict(size=16)),
+        xaxis_title=None,
+        yaxis_title="혼잡도 (%)",
+        height=height,
+        template='plotly_white',
+        showlegend=False,
+        margin=dict(t=50, b=50, l=50, r=30),
+        yaxis=dict(range=[0, max(direction_avg['평균_혼잡도'].max() * 1.2, 100)])
+    )
+    
+    return fig
+
+
+def create_station_heatmap(
+    pivot_df: pd.DataFrame,
+    title: str = "시간대별 혼잡도 히트맵",
+    height: int = 300,
+    x_label: str = "시간대",
+    y_label: str = "구분"
+) -> go.Figure:
+    """
+    역별 시간대 x 요일/방향 히트맵 생성
+    
+    Args:
+        pivot_df: 피벗된 데이터프레임 (인덱스: 요일/방향, 컬럼: 시간대)
+        title: 차트 제목
+        height: 차트 높이
+        x_label: x축 레이블
+        y_label: y축 레이블
+        
+    Returns:
+        go.Figure: Plotly Figure 객체
+    """
+    fig = px.imshow(
+        pivot_df,
+        labels=dict(x=x_label, y=y_label, color="혼잡도 (%)"),
+        color_continuous_scale="RdYlGn_r",  # 빨강(혼잡) -> 노랑 -> 초록(여유)
+        aspect="auto",
+        title=title
+    )
+    
+    fig.update_layout(
+        height=height,
+        template='plotly_white',
+        margin=dict(t=60, b=50, l=100, r=30),
+        coloraxis_colorbar=dict(
+            title="혼잡도 (%)",
+            ticksuffix="%"
+        )
+    )
+    
+    # x축 라벨 회전
+    fig.update_xaxes(tickangle=-45)
+    
+    return fig
+
+
 if __name__ == "__main__":
     # 테스트용 코드
     print("Visualization 모듈 테스트")
