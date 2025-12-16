@@ -487,6 +487,278 @@ def create_station_heatmap(
     return fig
 
 
+# ============================================================
+# Phase 4: 시간대별 분석 차트 함수
+# ============================================================
+
+def create_time_slot_bar_chart(
+    df: pd.DataFrame,
+    x: str = '역명',
+    y: str = '혼잡도',
+    title: str = "시간대별 역 혼잡도",
+    top_n: int = 20,
+    height: int = 600
+) -> go.Figure:
+    """
+    특정 시간대의 역별 혼잡도 막대 차트 생성 (상위 N개)
+    
+    Args:
+        df: 데이터프레임
+        x: x축 컬럼명 (역명)
+        y: y축 컬럼명 (혼잡도)
+        title: 차트 제목
+        top_n: 표시할 역 개수
+        height: 차트 높이
+        
+    Returns:
+        go.Figure: Plotly Figure 객체
+    """
+    # 상위 N개만 선택
+    df_plot = df.head(top_n).copy()
+    
+    # 호선별 색상 적용
+    colors = [LINE_COLORS.get(line, '#3498db') for line in df_plot['호선']]
+    
+    # 역명 + 호선 라벨 생성
+    df_plot['역_라벨'] = df_plot['역명'] + '\n(' + df_plot['호선'] + ')'
+    
+    fig = go.Figure(data=[
+        go.Bar(
+            x=df_plot['역_라벨'],
+            y=df_plot[y],
+            marker_color=colors,
+            text=df_plot[y].round(1),
+            texttemplate='%{text}%',
+            textposition='outside',
+            hovertemplate='<b>%{x}</b><br>혼잡도: %{y:.1f}%<extra></extra>'
+        )
+    ])
+    
+    fig.update_layout(
+        title=dict(text=title, font=dict(size=18)),
+        xaxis_title=None,
+        yaxis_title="혼잡도 (%)",
+        height=height,
+        template='plotly_white',
+        showlegend=False,
+        margin=dict(t=60, b=120, l=50, r=30),
+        yaxis=dict(range=[0, max(df_plot[y].max() * 1.1, 100)])
+    )
+    
+    # x축 라벨 회전
+    fig.update_xaxes(tickangle=-45)
+    
+    return fig
+
+
+def create_time_comparison_chart(
+    df: pd.DataFrame,
+    time1_col: str,
+    time2_col: str,
+    time1_label: str,
+    time2_label: str,
+    title: str = "시간대 비교",
+    top_n: int = 15,
+    height: int = 500
+) -> go.Figure:
+    """
+    두 시간대 비교 그룹 막대 차트 생성
+    
+    Args:
+        df: 비교 데이터프레임
+        time1_col: 첫 번째 시간대 컬럼명
+        time2_col: 두 번째 시간대 컬럼명
+        time1_label: 첫 번째 시간대 라벨
+        time2_label: 두 번째 시간대 라벨
+        title: 차트 제목
+        top_n: 표시할 역 개수
+        height: 차트 높이
+        
+    Returns:
+        go.Figure: Plotly Figure 객체
+    """
+    # 상위 N개만 선택
+    df_plot = df.head(top_n).copy()
+    
+    # 역명 + 호선 라벨
+    df_plot['역_라벨'] = df_plot['역명'] + '\n(' + df_plot['호선'] + ')'
+    
+    fig = go.Figure(data=[
+        go.Bar(
+            name=time1_label,
+            x=df_plot['역_라벨'],
+            y=df_plot[time1_col],
+            marker_color='#3498db',
+            text=df_plot[time1_col].round(1),
+            texttemplate='%{text}%',
+            textposition='outside',
+        ),
+        go.Bar(
+            name=time2_label,
+            x=df_plot['역_라벨'],
+            y=df_plot[time2_col],
+            marker_color='#e74c3c',
+            text=df_plot[time2_col].round(1),
+            texttemplate='%{text}%',
+            textposition='outside',
+        )
+    ])
+    
+    fig.update_layout(
+        title=dict(text=title, font=dict(size=18)),
+        xaxis_title=None,
+        yaxis_title="혼잡도 (%)",
+        barmode='group',
+        height=height,
+        template='plotly_white',
+        margin=dict(t=80, b=120, l=50, r=30),
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="right",
+            x=1
+        )
+    )
+    
+    # x축 라벨 회전
+    fig.update_xaxes(tickangle=-45)
+    
+    return fig
+
+
+def create_peak_pattern_chart(
+    df: pd.DataFrame,
+    x: str = '시간대',
+    y: str = '혼잡도',
+    title: str = "출퇴근 시간대 혼잡도 패턴",
+    morning_range: tuple = (7, 9),
+    evening_range: tuple = (17, 19),
+    height: int = 400
+) -> go.Figure:
+    """
+    출퇴근 시간대 패턴 선 차트 생성 (피크 구간 하이라이트)
+    
+    Args:
+        df: 시간대별 혼잡도 데이터프레임
+        x: x축 컬럼명
+        y: y축 컬럼명
+        title: 차트 제목
+        morning_range: 오전 피크 시간 범위 (시작시, 종료시)
+        evening_range: 오후 피크 시간 범위 (시작시, 종료시)
+        height: 차트 높이
+        
+    Returns:
+        go.Figure: Plotly Figure 객체
+    """
+    fig = px.line(
+        df, x=x, y=y,
+        title=title,
+        markers=True
+    )
+    
+    # 선 색상 변경
+    fig.update_traces(
+        line_color='#3498db',
+        marker_color='#3498db',
+        line_width=3
+    )
+    
+    # 오전 피크 영역 하이라이트
+    if morning_range:
+        morning_start, morning_end = morning_range
+        fig.add_vrect(
+            x0=morning_start - 0.5,
+            x1=morning_end + 0.5,
+            fillcolor="red",
+            opacity=0.1,
+            layer="below",
+            line_width=0,
+            annotation_text="오전 피크",
+            annotation_position="top left"
+        )
+    
+    # 오후 피크 영역 하이라이트
+    if evening_range:
+        evening_start, evening_end = evening_range
+        fig.add_vrect(
+            x0=evening_start - 0.5,
+            x1=evening_end + 0.5,
+            fillcolor="orange",
+            opacity=0.1,
+            layer="below",
+            line_width=0,
+            annotation_text="오후 피크",
+            annotation_position="top left"
+        )
+    
+    fig.update_layout(
+        xaxis_title="시간대",
+        yaxis_title="혼잡도 (%)",
+        height=height,
+        template='plotly_white',
+        hovermode='x unified',
+        margin=dict(t=50, b=50, l=50, r=30)
+    )
+    
+    # x축 라벨 회전
+    fig.update_xaxes(tickangle=-45)
+    
+    return fig
+
+
+def create_hourly_heatmap(
+    df: pd.DataFrame,
+    title: str = "시간대 x 호선 혼잡도 히트맵",
+    height: int = 500
+) -> go.Figure:
+    """
+    시간대 x 호선 히트맵 생성
+    
+    Args:
+        df: 데이터프레임 (호선, 시간대, 혼잡도 컬럼 필요)
+        title: 차트 제목
+        height: 차트 높이
+        
+    Returns:
+        go.Figure: Plotly Figure 객체
+    """
+    # 피벗 테이블 생성
+    pivot = df.pivot_table(
+        values='혼잡도',
+        index='호선',
+        columns='시간대',
+        aggfunc='mean'
+    )
+    
+    # 호선 순으로 정렬
+    line_order = sorted(pivot.index, key=lambda x: int(x.replace('호선', '').strip()))
+    pivot = pivot.reindex(line_order)
+    
+    fig = px.imshow(
+        pivot,
+        labels=dict(x="시간대", y="호선", color="혼잡도 (%)"),
+        color_continuous_scale="RdYlGn_r",
+        aspect="auto",
+        title=title
+    )
+    
+    fig.update_layout(
+        height=height,
+        template='plotly_white',
+        margin=dict(t=60, b=100, l=80, r=30),
+        coloraxis_colorbar=dict(
+            title="혼잡도 (%)",
+            ticksuffix="%"
+        )
+    )
+    
+    # x축 라벨 회전
+    fig.update_xaxes(tickangle=-45)
+    
+    return fig
+
+
 if __name__ == "__main__":
     # 테스트용 코드
     print("Visualization 모듈 테스트")

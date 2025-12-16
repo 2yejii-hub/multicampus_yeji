@@ -762,6 +762,235 @@ def generate_station_insights(df: pd.DataFrame, station: str, line: str) -> List
     return insights
 
 
+# ============================================================
+# Phase 4: 시간대별 분석 함수
+# ============================================================
+
+def get_congestion_by_specific_time(
+    df: pd.DataFrame, 
+    time_slot: str,
+    day_type: str = "전체"
+) -> pd.DataFrame:
+    """
+    특정 시간대의 역별 혼잡도를 반환합니다.
+    
+    Args:
+        df: 데이터프레임
+        time_slot: 시간대 (예: "08:00")
+        day_type: 요일 구분 ("평일", "토요일", "일요일", "전체")
+        
+    Returns:
+        pd.DataFrame: 역별 혼잡도 (역명, 호선, 혼잡도)
+    """
+    # 시간대 필터링
+    df_filtered = df[df['시간대'] == time_slot].copy()
+    
+    # 요일 필터링
+    if day_type != "전체":
+        if day_type == "휴일":
+            df_filtered = df_filtered[df_filtered['요일구분'].isin(['토요일', '일요일'])]
+        else:
+            df_filtered = df_filtered[df_filtered['요일구분'] == day_type]
+    
+    if df_filtered.empty:
+        return pd.DataFrame()
+    
+    # 역별 평균 혼잡도 계산 (방향 평균)
+    result = df_filtered.groupby(['역명', '호선', '호선_번호']).agg({
+        '혼잡도': 'mean'
+    }).reset_index()
+    
+    result.columns = ['역명', '호선', '호선_번호', '혼잡도']
+    result = result.sort_values('혼잡도', ascending=False)
+    
+    return result.reset_index(drop=True)
+
+
+def get_top_stations_by_time(
+    df: pd.DataFrame,
+    time_slot: str,
+    n: int = 20,
+    ascending: bool = False,
+    day_type: str = "전체"
+) -> pd.DataFrame:
+    """
+    특정 시간대의 혼잡한 역 TOP N을 반환합니다.
+    
+    Args:
+        df: 데이터프레임
+        time_slot: 시간대
+        n: 반환할 역 개수
+        ascending: True면 여유로운 역, False면 혼잡한 역
+        day_type: 요일 구분
+        
+    Returns:
+        pd.DataFrame: TOP N 역
+    """
+    time_df = get_congestion_by_specific_time(df, time_slot, day_type)
+    
+    if time_df.empty:
+        return pd.DataFrame()
+    
+    # 정렬 및 TOP N
+    result = time_df.sort_values('혼잡도', ascending=ascending).head(n)
+    
+    # 순위 추가
+    result = result.reset_index(drop=True)
+    result.insert(0, '순위', range(1, len(result) + 1))
+    
+    return result[['순위', '역명', '호선', '혼잡도']]
+
+
+def compare_time_slots(
+    df: pd.DataFrame,
+    time_slot1: str,
+    time_slot2: str,
+    day_type: str = "전체",
+    top_n: int = 20
+) -> pd.DataFrame:
+    """
+    두 시간대의 혼잡도를 비교합니다.
+    
+    Args:
+        df: 데이터프레임
+        time_slot1: 첫 번째 시간대
+        time_slot2: 두 번째 시간대
+        day_type: 요일 구분
+        top_n: 상위 N개 역 비교
+        
+    Returns:
+        pd.DataFrame: 시간대별 비교 데이터
+    """
+    # 각 시간대별 데이터
+    df1 = get_congestion_by_specific_time(df, time_slot1, day_type)
+    df2 = get_congestion_by_specific_time(df, time_slot2, day_type)
+    
+    if df1.empty or df2.empty:
+        return pd.DataFrame()
+    
+    # 병합
+    df1 = df1.rename(columns={'혼잡도': f'{time_slot1}_혼잡도'})
+    df2 = df2.rename(columns={'혼잡도': f'{time_slot2}_혼잡도'})
+    
+    merged = pd.merge(
+        df1[['역명', '호선', f'{time_slot1}_혼잡도']],
+        df2[['역명', '호선', f'{time_slot2}_혼잡도']],
+        on=['역명', '호선'],
+        how='inner'
+    )
+    
+    # 차이 계산
+    merged['차이'] = merged[f'{time_slot2}_혼잡도'] - merged[f'{time_slot1}_혼잡도']
+    
+    # 평균 혼잡도로 정렬
+    merged['평균'] = (merged[f'{time_slot1}_혼잡도'] + merged[f'{time_slot2}_혼잡도']) / 2
+    merged = merged.sort_values('평균', ascending=False).head(top_n)
+    
+    return merged.reset_index(drop=True)
+
+
+def get_peak_hours_pattern(df: pd.DataFrame, day_type: str = "평일") -> Dict:
+    """
+    출퇴근 시간대 패턴을 분석합니다.
+    
+    Args:
+        df: 데이터프레임
+        day_type: 요일 구분
+        
+    Returns:
+        Dict: 피크 시간대 정보
+    """
+    # 요일 필터링
+    if day_type != "전체":
+        if day_type == "휴일":
+            df_filtered = df[df['요일구분'].isin(['토요일', '일요일'])]
+        else:
+            df_filtered = df[df['요일구분'] == day_type]
+    else:
+        df_filtered = df
+    
+    # 시간대별 평균 혼잡도
+    time_avg = df_filtered.groupby(['시간대', '시간_정렬용'])['혼잡도'].mean().reset_index()
+    time_avg = time_avg.sort_values('시간_정렬용')
+    
+    # 오전 피크 (7:00-9:00)
+    morning_peak = time_avg[
+        (time_avg['시간_정렬용'] >= 7*60) & 
+        (time_avg['시간_정렬용'] <= 9*60)
+    ]
+    
+    # 오후 피크 (17:00-19:00)
+    evening_peak = time_avg[
+        (time_avg['시간_정렬용'] >= 17*60) & 
+        (time_avg['시간_정렬용'] <= 19*60)
+    ]
+    
+    result = {}
+    
+    if not morning_peak.empty:
+        max_morning = morning_peak.loc[morning_peak['혼잡도'].idxmax()]
+        result['오전_피크_시간'] = max_morning['시간대']
+        result['오전_피크_혼잡도'] = max_morning['혼잡도']
+        result['오전_평균_혼잡도'] = morning_peak['혼잡도'].mean()
+    
+    if not evening_peak.empty:
+        max_evening = evening_peak.loc[evening_peak['혼잡도'].idxmax()]
+        result['오후_피크_시간'] = max_evening['시간대']
+        result['오후_피크_혼잡도'] = max_evening['혼잡도']
+        result['오후_평균_혼잡도'] = evening_peak['혼잡도'].mean()
+    
+    return result
+
+
+def get_time_range_congestion(
+    df: pd.DataFrame,
+    start_time: str,
+    end_time: str,
+    day_type: str = "전체"
+) -> pd.DataFrame:
+    """
+    시간 범위의 평균 혼잡도를 계산합니다.
+    
+    Args:
+        df: 데이터프레임
+        start_time: 시작 시간 (예: "07:00")
+        end_time: 종료 시간 (예: "09:00")
+        day_type: 요일 구분
+        
+    Returns:
+        pd.DataFrame: 시간 범위의 역별 평균 혼잡도
+    """
+    # 시간 변환
+    start_minutes = int(start_time.split(':')[0]) * 60 + int(start_time.split(':')[1])
+    end_minutes = int(end_time.split(':')[0]) * 60 + int(end_time.split(':')[1])
+    
+    # 시간 범위 필터링
+    df_filtered = df[
+        (df['시간_정렬용'] >= start_minutes) & 
+        (df['시간_정렬용'] <= end_minutes)
+    ].copy()
+    
+    # 요일 필터링
+    if day_type != "전체":
+        if day_type == "휴일":
+            df_filtered = df_filtered[df_filtered['요일구분'].isin(['토요일', '일요일'])]
+        else:
+            df_filtered = df_filtered[df_filtered['요일구분'] == day_type]
+    
+    if df_filtered.empty:
+        return pd.DataFrame()
+    
+    # 역별 평균
+    result = df_filtered.groupby(['역명', '호선', '호선_번호']).agg({
+        '혼잡도': 'mean'
+    }).reset_index()
+    
+    result.columns = ['역명', '호선', '호선_번호', '평균_혼잡도']
+    result = result.sort_values('평균_혼잡도', ascending=False)
+    
+    return result.reset_index(drop=True)
+
+
 if __name__ == "__main__":
     # 테스트용 코드
     from data_loader import load_raw_data, save_processed_data
