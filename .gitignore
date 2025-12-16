@@ -17,10 +17,10 @@ ENV/
 .streamlit/secrets.toml
 
 # Data
-*.pkl
-*.csv
-data/processed/*.pkl
-data/raw/*.csv
+# *.pkl  # 전처리된 데이터는 포함
+# *.csv  # 원본 데이터는 포함
+# data/processed/*.pkl  # 전처리된 데이터는 포함
+# data/raw/*.csv  # 원본 데이터는 포함
 
 # IDE
 .vscode/
