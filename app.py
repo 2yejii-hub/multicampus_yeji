@@ -244,6 +244,42 @@ def render_top_tables(df_filtered):
             st.info("데이터가 없습니다.")
 
 
+def ensure_data_processed():
+    """전처리된 데이터가 없으면 자동으로 전처리 실행"""
+    from utils.data_loader import get_processed_data_path, check_data_files
+    from utils.data_processor import preprocess_data
+    
+    processed_path = get_processed_data_path()
+    
+    # 전처리된 파일이 없으면 자동 전처리
+    if not processed_path.exists():
+        st.info("🔄 첫 실행입니다. 데이터 전처리를 진행합니다...")
+        
+        try:
+            # 원본 데이터 로드
+            from utils.data_loader import load_raw_data, save_processed_data
+            
+            with st.spinner('원본 데이터를 불러오는 중...'):
+                df_raw = load_raw_data()
+            
+            # 전처리 실행
+            with st.spinner('데이터 전처리 중... (1-2분 소요)'):
+                df_processed = preprocess_data(df_raw)
+            
+            # 저장
+            with st.spinner('전처리된 데이터 저장 중...'):
+                save_processed_data(df_processed)
+            
+            st.success("✅ 데이터 전처리가 완료되었습니다!")
+            return df_processed
+            
+        except Exception as e:
+            st.error(f"❌ 데이터 전처리 중 오류 발생: {str(e)}")
+            raise
+    
+    return None
+
+
 def main():
     """메인 페이지"""
     
@@ -255,8 +291,11 @@ def main():
     
     # 데이터 로드
     try:
+        # 전처리된 데이터가 없으면 자동 전처리
+        df_auto = ensure_data_processed()
+        
         with st.spinner('데이터를 불러오는 중...'):
-            df = load_processed_data()
+            df = df_auto if df_auto is not None else load_processed_data()
         
         # 사이드바 필터
         day_type, time_range, selected_lines = render_sidebar(df)
